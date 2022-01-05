@@ -107,10 +107,10 @@ app.get('/auth/github/callback',
 			}
     }
 
-    res.redirect('/all');
+    res.redirect('/engrams');
 	});
 
-app.get('/all', (req, res) => {
+app.get('/engrams', (req, res) => {
 	// console.log(engramDataArray);
 	res.send(engramDataArray);
 	});
