@@ -5,20 +5,23 @@ const passport = require('passport');
 const GitHubStrategy = require('passport-github2').Strategy;
 const { Octokit } = require("@octokit/core");
 const { RequestError } = require("@octokit/request-error");
-const axios = require('axios');
-const history = require('connect-history-api-fallback');
+const cors = require('cors');
 
 const app = express();
 
 // configure Express
-app.use(function(req, res, next) {
-   //replace localhost:8080 to the ip address:port of your server
-   res.header("Access-Control-Allow-Origin", "http://localhost:8080"); // has to be 8080 as of this writing
-   res.header("Access-Control-Allow-Headers", "X-Requested-With");
-   res.header('Access-Control-Allow-Headers', 'Content-Type');
-   res.header('Access-Control-Allow-Credentials', true);
-   next();
-});
+// app.use(function(req, res, next) {
+//    res.header("Access-Control-Allow-Origin", "http://localhost:8080"); // has to be 8080 as of this typing
+//    res.header("Access-Control-Allow-Headers", "X-Requested-With");
+//    res.header('Access-Control-Allow-Headers', 'Content-Type');
+//    res.header('Access-Control-Allow-Credentials', true);
+//    next();
+// });
+app.use(cors({
+	origin: 'http://localhost:8080', // has to be 8080 as of this typing
+	headers: ['X-Requested-With', 'Content-Type'],
+	credentials: true,
+}));
 app.use(session({ secret: 'keyboard cat', resave: false, saveUninitialized: false, cookie: { secure: false } }));
 
 // configure Passport
@@ -64,6 +67,8 @@ passport.use(new GitHubStrategy({
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.options('/logout');
+
 app.get('/auth/github',
   passport.authenticate('github', { scope: [ 'user:email' ], session: true }),
   function(req, res){
@@ -74,7 +79,7 @@ app.get('/auth/github',
 app.get('/auth/github/callback', 
   passport.authenticate('github', { failureRedirect: '/', session: true }),
   function(req, res) {
-    res.redirect('/engrams');
+    res.redirect('/');
   });
 
 app.get('/engrams', ensureAuthenticated, async (req, res) => {
@@ -83,13 +88,6 @@ app.get('/engrams', ensureAuthenticated, async (req, res) => {
 	try {
 		const engramsDirectoryData = await getEngramsDirectoryData(req.user);
 		for (const basicEngramData of engramsDirectoryData) {
-			// const { data: engramData } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-			// 	owner: req.user.name,
-			// 	repo: req.user.repositoryName,
-			// 	path: `engrams/${basicEngramData.name}`,
-			// });
-
-			// console.log(engramData.content)
 			engramTitles.push(basicEngramData.name.replace('.engram', ''));
 		}
 	} catch (error) {
@@ -99,7 +97,7 @@ app.get('/engrams', ensureAuthenticated, async (req, res) => {
   res.send(engramTitles);
   });
 
-app.get('/:engramTitle', ensureAuthenticated, async (req, res) => {
+app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
 	const engramData = {};
 	const octokit = new Octokit({
 		auth: req.user.accessToken,
@@ -126,7 +124,19 @@ app.get('/:engramTitle', ensureAuthenticated, async (req, res) => {
 	res.send(engramData);
 });
 
-app.use(history());
+app.post('/logout', function(req, res) {
+  req.logout();
+	console.log('I think were logged out at this point?');
+  res.redirect('/');
+});
+
+app.get('/', function(req, res) {
+	if (req.isAuthenticated()) {
+		res.send(req.user.name);
+	} else {
+		res.send('not authenticated');
+	}
+});
 
 app.listen(3000, () => console.log('server is running on port 3000'));
 
