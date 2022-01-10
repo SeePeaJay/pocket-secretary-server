@@ -10,13 +10,6 @@ const cors = require('cors');
 const app = express();
 
 // configure Express
-// app.use(function(req, res, next) {
-//    res.header("Access-Control-Allow-Origin", "http://localhost:8080"); // has to be 8080 as of this typing
-//    res.header("Access-Control-Allow-Headers", "X-Requested-With");
-//    res.header('Access-Control-Allow-Headers', 'Content-Type');
-//    res.header('Access-Control-Allow-Credentials', true);
-//    next();
-// });
 app.use(cors({
 	origin: 'http://localhost:8080', // has to be 8080 as of this typing
 	headers: ['X-Requested-With', 'Content-Type'],
@@ -67,13 +60,10 @@ passport.use(new GitHubStrategy({
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.options('/logout');
-
 app.get('/auth/github',
   passport.authenticate('github', { scope: [ 'user:email' ], session: true }),
   function(req, res){
-    // The request will be redirected to GitHub for authentication, so this
-    // function will not be called.
+    // The request will be redirected to GitHub for authentication, so this function will not be called.
   });
 
 app.get('/auth/github/callback', 
@@ -81,6 +71,14 @@ app.get('/auth/github/callback',
   function(req, res) {
     res.redirect('/');
   });
+
+app.get('/', function(req, res) {
+	if (req.isAuthenticated()) {
+		res.send(req.user.name);
+	} else {
+		res.send(false);
+	}
+});
 
 app.get('/engrams', ensureAuthenticated, async (req, res) => {
 	const engramTitles = [];
@@ -125,17 +123,9 @@ app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
 });
 
 app.post('/logout', function(req, res) {
+	console.log('Logging out ...');
   req.logout();
-	console.log('I think were logged out at this point?');
   res.redirect('/');
-});
-
-app.get('/', function(req, res) {
-	if (req.isAuthenticated()) {
-		res.send(req.user.name);
-	} else {
-		res.send('not authenticated');
-	}
 });
 
 app.listen(3000, () => console.log('server is running on port 3000'));
@@ -143,11 +133,11 @@ app.listen(3000, () => console.log('server is running on port 3000'));
 // Simple route middleware to ensure user is authenticated. Use this route middleware on any resource that needs to be protected.
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) {
-		console.log('yoooo'); 
+		console.log('User is authenticated.'); 
     return next();
   }
-	console.log('not authenticated');
-  res.redirect('/'); // I think this is fine for now?
+	console.log('User is not authenticated.');
+  res.redirect('/');
 }
 
 async function getEngramsDirectoryData(user) {
@@ -180,7 +170,7 @@ async function getEngramsDirectoryData(user) {
 }
 
 async function createEngramsDirectoryData(user) {
-	console.log('need to create the directory');
+	console.log('Need to create the directory ...');
 
 	const octokit = new Octokit({
 		auth: user.accessToken,
