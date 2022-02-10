@@ -45,7 +45,7 @@ passport.use(new GitHubStrategy({
 				await getEngramsDirectoryData(user);
 			} catch (error) {
 				if (error instanceof RequestError && error.status === 404 && error.request.url.endsWith('/contents/engrams')) {
-					await createEngramsDirectoryData(user);
+					await saveEngramData(user, 'sample.engram', '* Sample');
 				} else {
 					console.error(error);
 
@@ -122,6 +122,10 @@ app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
 	res.send(engramData);
 });
 
+app.put('/engram', function(req, res) {
+	// await saveEngramData(req.user, engramFilename, engramContent);
+});
+
 app.post('/logout', function(req, res) {
 	console.log('Logging out ...');
   req.logout();
@@ -169,7 +173,7 @@ async function getEngramsDirectoryData(user) {
 	}
 }
 
-async function createEngramsDirectoryData(user) {
+async function saveEngramData(user, engramFilename, engramContent) {
 	console.log('Need to create the directory ...');
 
 	const octokit = new Octokit({
@@ -180,9 +184,9 @@ async function createEngramsDirectoryData(user) {
 		await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', {
 			owner: user.name,
 			repo: user.repositoryName,
-			path: 'engrams/sample.engram',
+			path: `engrams/${engramFilename}`,
 			message: 'init',
-			content: Buffer.from('* Sample').toString('base64'),
+			content: Buffer.from(engramContent).toString('base64'),
 		});
 	} catch (error) {
 		console.error(error);
