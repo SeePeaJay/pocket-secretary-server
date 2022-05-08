@@ -16,6 +16,7 @@ app.use(cors({
 	credentials: true,
 }));
 app.use(session({ secret: 'keyboard cat', resave: false, saveUninitialized: false, cookie: { secure: false } }));
+app.use(express.json());
 
 // configure Passport
 passport.serializeUser(function(user, done) {
@@ -45,7 +46,7 @@ passport.use(new GitHubStrategy({
 				await getEngramsDirectoryData(user);
 			} catch (error) {
 				if (error instanceof RequestError && error.status === 404 && error.request.url.endsWith('/contents/engrams')) {
-					await saveEngramData(user, 'sample.engram', '* Sample');
+					await initEngramData(user);
 				} else {
 					console.error(error);
 
@@ -122,8 +123,12 @@ app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
 	res.send(engramData);
 });
 
-app.put('/engram', function(req, res) {
-	// await saveEngramData(req.user, engramFilename, engramContent);
+app.put('/engram', async function(req, res) {
+	const engramFilename = `${req.body.engramTitle}.engram`;
+	const isDataInit = false;
+
+	await saveEngramData(req.user, engramFilename, req.body.engramContent, isDataInit);
+	res.sendStatus(200);
 });
 
 app.post('/logout', function(req, res) {
@@ -173,20 +178,39 @@ async function getEngramsDirectoryData(user) {
 	}
 }
 
-async function saveEngramData(user, engramFilename, engramContent) {
+async function initEngramData(user) {
 	console.log('Need to create the directory ...');
 
+	const engramFilename = 'sample.engram';
+	const engramContent = '* Sample';
+	const isDataInit = true;
+
+	saveEngramData(user, engramFilename, engramContent, isDataInit);
+}
+
+async function saveEngramData(user, engramFilename, engramContent, isDataInit) {
 	const octokit = new Octokit({
 		auth: user.accessToken,
 	});
+	const owner = user.name;
+	const repo = user.repositoryName;
+	const path =  `engrams/${engramFilename}`;
+	let message = '';
 
 	try {
-		await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', {
-			owner: user.name,
-			repo: user.repositoryName,
-			path: `engrams/${engramFilename}`,
-			message: 'init',
+		if (isDataInit) {
+			message = 'init';
+		} else {
+			message = 'auto save';
+			var { data: { sha } } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}',
+				{ owner, repo, path });
+		}
+
+		// console.log(sha);
+
+		await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', { owner, repo, path, message,
 			content: Buffer.from(engramContent).toString('base64'),
+			...(!isDataInit) && { sha },
 		});
 	} catch (error) {
 		console.error(error);
