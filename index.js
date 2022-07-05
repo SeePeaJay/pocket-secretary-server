@@ -125,9 +125,10 @@ app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
 
 app.put('/engram', async function(req, res) {
 	const engramFilename = `${req.body.engramTitle}.engram`;
-	const isDataInit = false;
+	const repoIsInit = false;
+	const engramIsNew = req.body.engramIsNew;
 
-	await saveEngramData(req.user, engramFilename, req.body.engramContent, isDataInit);
+	await saveEngramData(req.user, engramFilename, req.body.engramContent, repoIsInit, engramIsNew);
 	res.sendStatus(200);
 });
 
@@ -183,25 +184,21 @@ async function initEngramData(user) {
 
 	const engramFilename = 'sample.engram';
 	const engramContent = '* Sample';
-	const isDataInit = true;
+	const repoIsInit = true;
 
-	saveEngramData(user, engramFilename, engramContent, isDataInit);
+	saveEngramData(user, engramFilename, engramContent, repoIsInit);
 }
 
-async function saveEngramData(user, engramFilename, engramContent, isDataInit) {
-	const octokit = new Octokit({
-		auth: user.accessToken,
-	});
+// if repo is being initialized ...
+async function saveEngramData(user, engramFilename, engramContent, repoIsInit, engramIsNew) {
+	const octokit = new Octokit({ auth: user.accessToken });
 	const owner = user.name;
 	const repo = user.repositoryName;
 	const path =  `engrams/${engramFilename}`;
-	let message = '';
+	let message = repoIsInit ? 'init' : 'auto save';
 
 	try {
-		if (isDataInit) {
-			message = 'init';
-		} else {
-			message = 'auto save';
+		if (!engramIsNew) {
 			var { data: { sha } } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}',
 				{ owner, repo, path });
 		}
@@ -210,7 +207,7 @@ async function saveEngramData(user, engramFilename, engramContent, isDataInit) {
 
 		await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', { owner, repo, path, message,
 			content: Buffer.from(engramContent).toString('base64'),
-			...(!isDataInit) && { sha },
+			...(!repoIsInit) && { sha },
 		});
 	} catch (error) {
 		console.error(error);
