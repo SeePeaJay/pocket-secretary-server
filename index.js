@@ -61,21 +61,39 @@ passport.use(new GitHubStrategy({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Github authentication server does not allow CORS (client making an axios POST request would not work), so this in combination with a redirect link in the client is the way to go. 
 app.get('/auth/github',
   passport.authenticate('github', { scope: [ 'user:email' ], session: true }),
-  function(req, res){
+  function(req, res) {
     // The request will be redirected to GitHub for authentication, so this function will not be called.
-  });
-
+  }
+);
 app.get('/auth/github/callback', 
   passport.authenticate('github', { failureRedirect: '/', session: true }),
   function(req, res) {
-    res.redirect('/');
-  });
+    res.redirect('/'); // Back to client Landing route. TODO: for some reason, any URL here will eventually resolve to '/'. Thankfully, this appears not to be an issue so far.
+  }
+);
 
-app.get('/', function(req, res) {
+// should only be requested by the client
+app.get('/', async function(req, res) {
 	if (req.isAuthenticated()) {
-		res.send(req.user.name);
+		// prepare user and engram data to send back
+		const username = req.user.name;
+		const engramTitles = [];
+
+		try {
+			const engramsDirectoryData = await getEngramsDirectoryData(req.user);
+			for (const basicEngramData of engramsDirectoryData) {
+				engramTitles.push(basicEngramData.name.replace('.engram', ''));
+			}
+
+			res.send({ username, engramTitles });
+		} catch (error) {
+			console.error(error);
+
+			res.send(false);
+		}
 	} else {
 		res.send(false);
 	}
@@ -94,7 +112,7 @@ app.get('/engrams', ensureAuthenticated, async (req, res) => {
 	}
 
   res.send(engramTitles);
-  });
+});
 
 app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
 	const engramData = {};
@@ -146,7 +164,7 @@ function ensureAuthenticated(req, res, next) {
 		console.log('User is authenticated.'); 
     return next();
   }
-	console.log('User is not authenticated.');
+	console.log('WARNING: User is not authenticated.');
   res.redirect('/');
 }
 
@@ -182,8 +200,8 @@ async function getEngramsDirectoryData(user) {
 async function initEngramData(user) {
 	console.log('Need to create the directory ...');
 
-	const engramFilename = 'sample.engram';
-	const engramContent = '* Sample';
+	const engramFilename = 'Starred.engram';
+	const engramContent = '* Starred';
 	const repoIsInit = true;
 
 	saveEngramData(user, engramFilename, engramContent, repoIsInit);
