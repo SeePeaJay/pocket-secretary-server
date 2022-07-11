@@ -71,24 +71,21 @@ app.get('/auth/github',
 app.get('/auth/github/callback', 
   passport.authenticate('github', { failureRedirect: '/', session: true }),
   function(req, res) {
-    res.redirect('/'); // Back to client Landing route. TODO: for some reason, any URL here will eventually resolve to '/'. Thankfully, this appears not to be an issue so far.
+    res.redirect('/'); // back to client Landing route
+		// TODO: for some reason, any URL here will eventually resolve to '/' (even tho the URL would appear for a brief moment before changing back to '/'). Thankfully, this appears not to be an issue so far.
   }
 );
 
 // should only be requested by the client
 app.get('/', async function(req, res) {
 	if (req.isAuthenticated()) {
-		// prepare user and engram data to send back
+		// prepare user and all engram data to send back
 		const username = req.user.name;
-		const engramTitles = [];
 
 		try {
-			const engramsDirectoryData = await getEngramsDirectoryData(req.user);
-			for (const basicEngramData of engramsDirectoryData) {
-				engramTitles.push(basicEngramData.name.replace('.engram', ''));
-			}
+			const allEngramsTitleAndContent = await getAllEngramsTitleAndContent(req.user);
 
-			res.send({ username, engramTitles });
+			res.send({ username, allEngramsTitleAndContent });
 		} catch (error) {
 			console.error(error);
 
@@ -99,47 +96,49 @@ app.get('/', async function(req, res) {
 	}
 });
 
-app.get('/engrams', ensureAuthenticated, async (req, res) => {
-	const engramTitles = [];
+// app.get('/engrams', ensureAuthenticated, async (req, res) => {
+// 	const engramTitles = [];
 
-	try {
-		const engramsDirectoryData = await getEngramsDirectoryData(req.user);
-		for (const basicEngramData of engramsDirectoryData) {
-			engramTitles.push(basicEngramData.name.replace('.engram', ''));
-		}
-	} catch (error) {
-		console.error(error);
-	}
+// 	try {
+// 		const engramsDirectoryData = await getEngramsDirectoryData(req.user);
+// 		for (const basicEngramData of engramsDirectoryData) {
+// 			engramTitles.push(basicEngramData.name.replace('.engram', ''));
+// 		}
+// 	} catch (error) {
+// 		console.error(error);
+// 	}
 
-  res.send(engramTitles);
-});
+//   res.send(engramTitles);
+// });
 
-app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
-	const engramData = {};
-	const octokit = new Octokit({
-		auth: req.user.accessToken,
-	});
+// app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
+// 	const engramData = {};
+// 	const octokit = new Octokit({
+// 		auth: req.user.accessToken,
+// 	});
 
-	try {
-		const engramsDirectoryData = await getEngramsDirectoryData(req.user);
+// 	try {
+// 		const engramsDirectoryData = await getEngramsDirectoryData(req.user);
 
-		const engramFilename = engramsDirectoryData.find((basicEngramData) => basicEngramData.name.startsWith(req.params.engramTitle)).name;
-		const { data: basicEngramData } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-			owner: req.user.name,
-			repo: req.user.repositoryName,
-			path: `engrams/${engramFilename}`,
-		});
+// 		const engramFilename = engramsDirectoryData.find((basicEngramData) => basicEngramData.name.startsWith(req.params.engramTitle)).name;
+// 		const { data: basicEngramData } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
+// 			owner: req.user.name,
+// 			repo: req.user.repositoryName,
+// 			path: `engrams/${engramFilename}`,
+// 		});
 
-		engramData.title = engramFilename.replace('.engram', '');
-		engramData.content = basicEngramData.content;
-	} catch (error) {
-		console.error(error);
-	}
+// 		console.log(basicEngramData);
 
-	console.log(engramData);
+// 		engramData.title = engramFilename.replace('.engram', '');
+// 		engramData.content = basicEngramData.content;
+// 	} catch (error) {
+// 		console.error(error);
+// 	}
 
-	res.send(engramData);
-});
+// 	console.log(engramData);
+
+// 	res.send(engramData);
+// });
 
 app.put('/engram', async function(req, res) {
 	const engramFilename = `${req.body.engramTitle}.engram`;
@@ -150,10 +149,10 @@ app.put('/engram', async function(req, res) {
 	res.sendStatus(200);
 });
 
-app.post('/logout', function(req, res) {
+app.post('/logout', function(req, res) { // TODO: DELETE instead of POST?
 	console.log('Logging out ...');
   req.logout();
-  res.redirect('/');
+  res.redirect('/'); // TODO: does this even work?
 });
 
 app.listen(3000, () => console.log('server is running on port 3000'));
@@ -168,8 +167,37 @@ function ensureAuthenticated(req, res, next) {
   res.redirect('/');
 }
 
-async function getEngramsDirectoryData(user) {
+async function getAllEngramsTitleAndContent(user) {
 	const octokit = new Octokit({
+		auth: user.accessToken,
+	});
+
+	const allEngramsTitleAndContent = [];
+	try {
+		const allEngramsProperties = await getEngramsDirectoryData(user);
+
+		for (const basicEngramProperties of allEngramsProperties) {
+			const engramFilename = basicEngramProperties.name;
+			const { data: specificEngramProperties } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
+				owner: user.name,
+				repo: user.repositoryName,
+				path: `engrams/${engramFilename}`,
+			});
+
+			allEngramsTitleAndContent.push({
+				title: engramFilename.replace('.engram', ''), // TODO: better way to trim this
+				content: specificEngramProperties.content,
+			});
+		}
+	} catch (error) {
+		throw error;
+	}
+
+	return allEngramsTitleAndContent;
+}
+
+async function getEngramsDirectoryData(user) {
+	const octokit = new Octokit({ // for some reason octokit cannot be a param, hence this
 		auth: user.accessToken,
 	});
 
