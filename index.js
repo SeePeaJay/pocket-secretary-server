@@ -43,7 +43,7 @@ passport.use(new GitHubStrategy({
       };
 
 			try {
-				await getEngramsDirectoryData(user);
+				await getAllEngramsDirectoryData(user);
 			} catch (error) {
 				if (error instanceof RequestError && error.status === 404 && error.request.url.endsWith('/contents/engrams')) {
 					await initEngramData(user);
@@ -96,50 +96,6 @@ app.get('/', async function(req, res) {
 	}
 });
 
-// app.get('/engrams', ensureAuthenticated, async (req, res) => {
-// 	const engramTitles = [];
-
-// 	try {
-// 		const engramsDirectoryData = await getEngramsDirectoryData(req.user);
-// 		for (const basicEngramData of engramsDirectoryData) {
-// 			engramTitles.push(basicEngramData.name.replace('.engram', ''));
-// 		}
-// 	} catch (error) {
-// 		console.error(error);
-// 	}
-
-//   res.send(engramTitles);
-// });
-
-// app.get('/engrams/:engramTitle', ensureAuthenticated, async (req, res) => {
-// 	const engramData = {};
-// 	const octokit = new Octokit({
-// 		auth: req.user.accessToken,
-// 	});
-
-// 	try {
-// 		const engramsDirectoryData = await getEngramsDirectoryData(req.user);
-
-// 		const engramFilename = engramsDirectoryData.find((basicEngramData) => basicEngramData.name.startsWith(req.params.engramTitle)).name;
-// 		const { data: basicEngramData } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-// 			owner: req.user.name,
-// 			repo: req.user.repositoryName,
-// 			path: `engrams/${engramFilename}`,
-// 		});
-
-// 		console.log(basicEngramData);
-
-// 		engramData.title = engramFilename.replace('.engram', '');
-// 		engramData.content = basicEngramData.content;
-// 	} catch (error) {
-// 		console.error(error);
-// 	}
-
-// 	console.log(engramData);
-
-// 	res.send(engramData);
-// });
-
 app.put('/engram', async function(req, res) {
 	const engramFilename = `${req.body.engramTitle}.engram`;
 	const repoIsInit = false;
@@ -167,36 +123,7 @@ function ensureAuthenticated(req, res, next) {
   res.redirect('/');
 }
 
-async function getAllEngramsTitleAndContent(user) {
-	const octokit = new Octokit({
-		auth: user.accessToken,
-	});
-
-	const allEngramsTitleAndContent = [];
-	try {
-		const allEngramsProperties = await getEngramsDirectoryData(user);
-
-		for (const basicEngramProperties of allEngramsProperties) {
-			const engramFilename = basicEngramProperties.name;
-			const { data: specificEngramProperties } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-				owner: user.name,
-				repo: user.repositoryName,
-				path: `engrams/${engramFilename}`,
-			});
-
-			allEngramsTitleAndContent.push({
-				title: engramFilename.replace('.engram', ''), // TODO: better way to trim this
-				content: specificEngramProperties.content,
-			});
-		}
-	} catch (error) {
-		throw error;
-	}
-
-	return allEngramsTitleAndContent;
-}
-
-async function getEngramsDirectoryData(user) {
+async function getAllEngramsDirectoryData(user) {
 	const octokit = new Octokit({ // for some reason octokit cannot be a param, hence this
 		auth: user.accessToken,
 	});
@@ -233,6 +160,35 @@ async function initEngramData(user) {
 	const repoIsInit = true;
 
 	saveEngramData(user, engramFilename, engramContent, repoIsInit);
+}
+
+async function getAllEngramsTitleAndContent(user) {
+	const octokit = new Octokit({
+		auth: user.accessToken,
+	});
+
+	const allEngramsTitleAndContent = [];
+	try {
+		const allEngramsProperties = await getAllEngramsDirectoryData(user);
+
+		for (const basicEngramProperties of allEngramsProperties) {
+			const engramFilename = basicEngramProperties.name;
+			const { data: specificEngramProperties } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
+				owner: user.name,
+				repo: user.repositoryName,
+				path: `engrams/${engramFilename}`,
+			});
+
+			allEngramsTitleAndContent.push({
+				title: engramFilename.replace('.engram', ''), // TODO: better way to trim this
+				content: specificEngramProperties.content,
+			});
+		}
+	} catch (error) {
+		throw error;
+	}
+
+	return allEngramsTitleAndContent;
 }
 
 // if repo is being initialized ...
