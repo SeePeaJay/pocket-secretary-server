@@ -12,6 +12,7 @@ const app = express();
 // configure Express
 app.use(cors({
 	origin: 'http://localhost:8080', // has to be 8080 as of this typing
+	methods: ['GET', 'PUT', 'POST', 'DELETE'],
 	headers: ['X-Requested-With', 'Content-Type'],
 	credentials: true,
 }));
@@ -40,6 +41,7 @@ passport.use(new GitHubStrategy({
 				accessToken,
 				refreshToken,
         repositoryName: '',
+				// latestCommitSha: '',
       };
 
 			try {
@@ -78,8 +80,7 @@ app.get('/auth/github/callback',
 
 // should only be requested by the client
 app.get('/', async function(req, res) {
-	if (req.isAuthenticated()) {
-		// prepare user and all engram data to send back
+	if (req.isAuthenticated()) { // prepare user and all engram data to send back
 		const username = req.user.name;
 
 		try {
@@ -103,6 +104,14 @@ app.put('/engram', async function(req, res) {
 
 	await saveEngram(req.user, engramFilename, req.body.engramContent, repoIsInit, engramIsNew);
 	res.sendStatus(200);
+});
+
+app.delete('/engrams', async function(req, res) {
+	console.log(req);
+	const filenamesOfToBeDeletedEngrams = req.body.engramTitles.map((engramTitle) => `${engramTitle}.engram`);
+
+	await deleteEngrams(req.user, filenamesOfToBeDeletedEngrams);
+	res.sendStatus(200); // if delete screws up, gotta send diff status ...
 });
 
 app.post('/logout', function(req, res) { // TODO: DELETE instead of POST?
@@ -140,16 +149,17 @@ async function getEngramsTree(user) { // return the tree representation of '/eng
 		);
 		user.repositoryName = repositoryData.repositories[0].name; // get first directory only
 
-		const { data: everyCommitData } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
+		const { data: dataForAllCommits } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
   		owner: user.name,
   		repo: user.repositoryName,
 		});
 
-		const mostRecentCommitSha = everyCommitData[0].sha;
+		const latestCommitSha = dataForAllCommits[0].sha;
+		// user.latestCommitSha = latestCommitSha;
 		const { data: mostRecentCommitData } = await octokit.request('GET /repos/{owner}/{repo}/commits/{ref}', {
   		owner: user.name,
   		repo: user.repositoryName,
-			ref: mostRecentCommitSha,
+			ref: latestCommitSha,
 		}); // ref here = particular commit sha
 
 		const repoSha = mostRecentCommitData.commit.tree.sha;
@@ -179,7 +189,7 @@ async function initEngramsDirectory(user) {
 	const engramContent = '* Starred';
 	const repoIsInit = true;
 
-	saveEngram(user, engramFilename, engramContent, repoIsInit);
+	await saveEngram(user, engramFilename, engramContent, repoIsInit);
 }
 
 async function getEveryEngramTitleAndContent(user) {
@@ -213,7 +223,6 @@ async function getEveryEngramTitleAndContent(user) {
 	return everyEngramTitleAndContent;
 }
 
-// if repo is being initialized ...
 async function saveEngram(user, engramFilename, engramContent, repoIsInit, engramIsNew) {
 	const octokit = new Octokit({ auth: user.accessToken });
 	const owner = user.name;
@@ -237,3 +246,95 @@ async function saveEngram(user, engramFilename, engramContent, repoIsInit, engra
 		console.error(error);
 	}
 }
+
+async function deleteEngrams(user, filenamesOfToBeDeletedEngrams) {
+	// const { data: dataForCreatingTree } = await octokit.request('POST /repos/{owner}/{repo}/git/trees', {
+	// 	owner: user.name,
+	// 	repo: user.repositoryName,
+	// 	tree: [
+	// 		{
+	// 			path: `engrams/new4.engram`,
+	// 			mode: '100644',
+	// 			type: 'blob',
+	// 			sha: null,
+	// 		}
+	// 	],
+	// 	base_tree: user.latestCommitSha,
+	// });
+	// const treeSha = dataForCreatingTree.sha;
+
+	// const { data: newCommitData } = await octokit.request('POST /repos/{owner}/{repo}/git/commits', {
+	// 	owner: user.name,
+	// 	repo: user.repositoryName,
+	// 	message: 'bulk delete',
+	// 	parents: [user.latestCommitSha],
+	// 	tree: treeSha,
+	// });
+	// const newCommitSha = newCommitData.sha;
+
+	// await octokit.request('PATCH /repos/{owner}/{repo}/git/refs/{ref}', {
+	// 	owner: user.name,
+	// 	repo: user.repositoryName,
+	// 	ref: 'heads/main',
+	// 	sha: newCommitSha,
+	// 	force: true,
+	// });
+
+	const octokit = new Octokit({ auth: user.accessToken });
+
+	const newTree = [];
+	filenamesOfToBeDeletedEngrams.forEach(async (filename) => {
+		newTree.push({
+			path: `engrams/${filename}`,
+			mode: '100644',
+			type: 'blob',
+			sha: null,
+		})
+	});
+
+	const { data: dataForAllCommits } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
+		owner: user.name,
+		repo: user.repositoryName,
+	});
+	const latestCommitSha = dataForAllCommits[0].sha;
+
+	const { data: dataForCreatingTree } = await octokit.request('POST /repos/{owner}/{repo}/git/trees', {
+		owner: user.name,
+		repo: user.repositoryName,
+		tree: newTree,
+		base_tree: latestCommitSha,
+	});
+	const treeSha = dataForCreatingTree.sha;
+
+	const { data: newCommitData } = await octokit.request('POST /repos/{owner}/{repo}/git/commits', {
+		owner: user.name,
+		repo: user.repositoryName,
+		message: 'bulk delete',
+		parents: [latestCommitSha],
+		tree: treeSha,
+	});
+	const newCommitSha = newCommitData.sha;
+	
+	// setLatestCommitSha at this point?
+
+	await octokit.request('PATCH /repos/{owner}/{repo}/git/refs/{ref}', {
+  	owner: user.name,
+  	repo: user.repositoryName,
+  	ref: 'heads/main',
+			/*
+				* shouldn't be 'refs/...', otherwise run into 422 reference does not exist error
+				* should be main, unless Github changes it again ... in which case, consider searching the ref first: https://docs.github.com/en/rest/git/refs#list-matching-references
+			*/
+  	sha: newCommitSha,
+  	force: true,
+	});
+}
+
+// /* test */
+// 	const { data: dataForAllRefs } = await octokit.request('GET /repos/{owner}/{repo}/git/matching-refs/{ref}', {
+// 		owner: user.name,
+// 		repo: user.repositoryName,
+// 		ref: 'heads',
+// 	});
+
+// 	console.log(dataForAllRefs[0].ref);
