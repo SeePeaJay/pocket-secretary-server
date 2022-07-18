@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const session = require("express-session");
 const passport = require('passport');
@@ -41,11 +42,10 @@ passport.use(new GitHubStrategy({
 				accessToken,
 				refreshToken,
         repositoryName: '',
-				// latestCommitSha: '',
       };
 
 			try {
-				await getEngramsTree(user);
+				await setRepositoryName(user);
 			} catch (error) {
 				if (error instanceof RequestError && error.status === 404 && error.request.url.endsWith('/contents/engrams')) {
 					await initEngramsDirectory(user);
@@ -73,6 +73,7 @@ app.get('/auth/github',
 app.get('/auth/github/callback', 
   passport.authenticate('github', { failureRedirect: '/', session: true }),
   function(req, res) {
+		console.log('Logging in ...');
     res.redirect('/'); // back to client Landing route
 		// TODO: for some reason, any URL here will eventually resolve to '/' (even tho the URL would appear for a brief moment before changing back to '/'). Thankfully, this appears not to be an issue so far.
   }
@@ -84,13 +85,13 @@ app.get('/', async function(req, res) {
 		const username = req.user.name;
 
 		try {
-			const everyEngramTitleAndContent = await getEveryEngramTitleAndContent(req.user);
+			const titleAndContentForAllEngrams = await getTitleAndContentForAllEngrams(req.user);
 
-			res.send({ username, everyEngramTitleAndContent });
+			res.send({ username, titleAndContentForAllEngrams });
 		} catch (error) {
 			console.error(error);
 
-			res.send(false);
+			res.sendStatus(502); // TODO: send entire error message (for alert in frontend)?
 		}
 	} else {
 		res.send(false);
@@ -99,19 +100,25 @@ app.get('/', async function(req, res) {
 
 app.put('/engram', async function(req, res) {
 	const engramFilename = `${req.body.engramTitle}.engram`;
-	const repoIsInit = false;
-	const engramIsNew = req.body.engramIsNew;
 
-	await saveEngram(req.user, engramFilename, req.body.engramContent, repoIsInit, engramIsNew);
-	res.sendStatus(200);
+	try {
+		await saveEngram(req.user, engramFilename, req.body.engramContent, req.body.commitMessage);
+		res.sendStatus(200);
+	} catch (error) {
+		res.sendStatus(502);
+	}
 });
 
 app.delete('/engrams', async function(req, res) {
-	console.log(req);
 	const filenamesOfToBeDeletedEngrams = req.body.engramTitles.map((engramTitle) => `${engramTitle}.engram`);
+	const commitMessage = req.body.commitMessage;
 
-	await deleteEngrams(req.user, filenamesOfToBeDeletedEngrams);
-	res.sendStatus(200); // if delete screws up, gotta send diff status ...
+	try {
+		await deleteEngrams(req.user, filenamesOfToBeDeletedEngrams, commitMessage);
+		res.sendStatus(200);
+	} catch (error) {
+		res.sendStatus(502);
+	}
 });
 
 app.post('/logout', function(req, res) { // TODO: DELETE instead of POST?
@@ -128,8 +135,68 @@ function ensureAuthenticated(req, res, next) {
 		console.log('User is authenticated.'); 
     return next();
   }
-	console.log('WARNING: User is not authenticated.');
+	console.log('User is not authenticated.');
   res.redirect('/');
+}
+
+async function setRepositoryName(user) {
+	const octokit = new Octokit({ // for some reason octokit cannot be a param, hence this
+		auth: user.accessToken,
+	});
+
+	try {
+		const { data: installationData } = await octokit.request('GET /user/installations');
+		const installationId = installationData.installations[0].id;
+		const { data: repositoryData } = await octokit.request(
+			'GET /user/installations/{installation_id}/repositories',
+			{
+				installation_id: installationId,
+			}
+		);
+
+		user.repositoryName = repositoryData.repositories[0].name; // get first directory only
+	} catch (error) {
+		throw(error);
+	}
+}
+
+async function initEngramsDirectory(user) {
+	console.log('Need to create the directory ...');
+
+	const engramFilename = 'Starred.engram';
+	const engramContent = '* Starred';
+	const commitMessage = 'init';
+
+	await saveEngram(user, engramFilename, engramContent, commitMessage);
+}
+
+async function getTitleAndContentForAllEngrams(user) {
+	const octokit = new Octokit({
+		auth: user.accessToken,
+	});
+
+	const titleAndContentForAllEngrams = [];
+	try {
+		const engramsTree = await getEngramsTree(user);
+
+		for (const basicEngramProperties of engramsTree) {
+			const engramFilename = basicEngramProperties.path;
+			const { data: specificEngramProperties } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
+				owner: user.name,
+				repo: user.repositoryName,
+				path: `engrams/${engramFilename}`,
+			});
+
+			titleAndContentForAllEngrams.push({
+				title: path.parse(engramFilename).name,
+				content: specificEngramProperties.content,
+			});
+		}
+	} catch (error) {
+		throw error;
+	}
+
+	return titleAndContentForAllEngrams;
 }
 
 async function getEngramsTree(user) { // return the tree representation of '/engrams' (containing useful info of every file within said directory), as per the Git trees API
@@ -138,24 +205,7 @@ async function getEngramsTree(user) { // return the tree representation of '/eng
 	});
 
 	try {
-		const { data: installationData } = await octokit.request('GET /user/installations');
-		const installationId = installationData.installations[0].id;
-
-		const { data: repositoryData } = await octokit.request(
-			'GET /user/installations/{installation_id}/repositories',
-			{
-				installation_id: installationId,
-			}
-		);
-		user.repositoryName = repositoryData.repositories[0].name; // get first directory only
-
-		const { data: dataForAllCommits } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
-  		owner: user.name,
-  		repo: user.repositoryName,
-		});
-
-		const latestCommitSha = dataForAllCommits[0].sha;
-		// user.latestCommitSha = latestCommitSha;
+		const latestCommitSha = await getLatestCommitSha(user);
 		const { data: mostRecentCommitData } = await octokit.request('GET /repos/{owner}/{repo}/commits/{ref}', {
   		owner: user.name,
   		repo: user.repositoryName,
@@ -182,106 +232,50 @@ async function getEngramsTree(user) { // return the tree representation of '/eng
 	}
 }
 
-async function initEngramsDirectory(user) {
-	console.log('Need to create the directory ...');
-
-	const engramFilename = 'Starred.engram';
-	const engramContent = '* Starred';
-	const repoIsInit = true;
-
-	await saveEngram(user, engramFilename, engramContent, repoIsInit);
-}
-
-async function getEveryEngramTitleAndContent(user) {
+async function getLatestCommitSha(user) {
 	const octokit = new Octokit({
 		auth: user.accessToken,
 	});
 
-	const everyEngramTitleAndContent = [];
 	try {
-		const engramsTree = await getEngramsTree(user);
+		const { data: dataForAllCommits } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
+			owner: user.name,
+			repo: user.repositoryName,
+		});
 
-		// console.log(engramsTree);
-
-		for (const basicEngramProperties of engramsTree) {
-			const engramFilename = basicEngramProperties.path;
-			const { data: specificEngramProperties } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-				owner: user.name,
-				repo: user.repositoryName,
-				path: `engrams/${engramFilename}`,
-			});
-
-			everyEngramTitleAndContent.push({
-				title: engramFilename.replace('.engram', ''), // TODO: better way to trim this
-				content: specificEngramProperties.content,
-			});
-		}
+		return dataForAllCommits[0].sha;
 	} catch (error) {
-		throw error;
+		throw(error);
 	}
-
-	return everyEngramTitleAndContent;
 }
 
-async function saveEngram(user, engramFilename, engramContent, repoIsInit, engramIsNew) {
+// commitMessage appears to be a better alternative compared to one param for each additional commit reason (repoIsNew, etc.) ... recall Github's 100644
+async function saveEngram(user, engramFilename, engramContent, commitMessage) {
 	const octokit = new Octokit({ auth: user.accessToken });
 	const owner = user.name;
 	const repo = user.repositoryName;
 	const path = `engrams/${engramFilename}`;
-	let message = repoIsInit ? 'init' : 'auto save';
 
 	try {
-		if (!engramIsNew) {
+		if (commitMessage === 'auto save') { // if the engram is not newly created or renamed
 			var { data: { sha } } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}',
-				{ owner, repo, path });
+				{ owner, repo, path }); // var to make sha accessible outside of current scope
 		}
 
-		// console.log(sha);
-
-		await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', { owner, repo, path, message,
+		await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', { owner, repo, path,
+			message: commitMessage,
 			content: Buffer.from(engramContent).toString('base64'),
-			...(!repoIsInit) && { sha }, // 
+			...(sha) && { sha }, // conditionally add sha to object
 		});
 	} catch (error) {
-		console.error(error);
+		throw(error);
 	}
 }
 
-async function deleteEngrams(user, filenamesOfToBeDeletedEngrams) {
-	// const { data: dataForCreatingTree } = await octokit.request('POST /repos/{owner}/{repo}/git/trees', {
-	// 	owner: user.name,
-	// 	repo: user.repositoryName,
-	// 	tree: [
-	// 		{
-	// 			path: `engrams/new4.engram`,
-	// 			mode: '100644',
-	// 			type: 'blob',
-	// 			sha: null,
-	// 		}
-	// 	],
-	// 	base_tree: user.latestCommitSha,
-	// });
-	// const treeSha = dataForCreatingTree.sha;
-
-	// const { data: newCommitData } = await octokit.request('POST /repos/{owner}/{repo}/git/commits', {
-	// 	owner: user.name,
-	// 	repo: user.repositoryName,
-	// 	message: 'bulk delete',
-	// 	parents: [user.latestCommitSha],
-	// 	tree: treeSha,
-	// });
-	// const newCommitSha = newCommitData.sha;
-
-	// await octokit.request('PATCH /repos/{owner}/{repo}/git/refs/{ref}', {
-	// 	owner: user.name,
-	// 	repo: user.repositoryName,
-	// 	ref: 'heads/main',
-	// 	sha: newCommitSha,
-	// 	force: true,
-	// });
-
+async function deleteEngrams(user, filenamesOfToBeDeletedEngrams, commitMessage) {
 	const octokit = new Octokit({ auth: user.accessToken });
 
+	// build a new git tree
 	const newTree = [];
 	filenamesOfToBeDeletedEngrams.forEach(async (filename) => {
 		newTree.push({
@@ -292,49 +286,47 @@ async function deleteEngrams(user, filenamesOfToBeDeletedEngrams) {
 		})
 	});
 
-	const { data: dataForAllCommits } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
-		owner: user.name,
-		repo: user.repositoryName,
-	});
-	const latestCommitSha = dataForAllCommits[0].sha;
+	try {
+		const latestCommitSha = await getLatestCommitSha(user);
 
-	const { data: dataForCreatingTree } = await octokit.request('POST /repos/{owner}/{repo}/git/trees', {
-		owner: user.name,
-		repo: user.repositoryName,
-		tree: newTree,
-		base_tree: latestCommitSha,
-	});
-	const treeSha = dataForCreatingTree.sha;
+		// create the tree on Github
+		const { data: dataForCreatingTree } = await octokit.request('POST /repos/{owner}/{repo}/git/trees', {
+			owner: user.name,
+			repo: user.repositoryName,
+			tree: newTree,
+			base_tree: latestCommitSha,
+		});
+		const treeSha = dataForCreatingTree.sha;
 
-	const { data: newCommitData } = await octokit.request('POST /repos/{owner}/{repo}/git/commits', {
-		owner: user.name,
-		repo: user.repositoryName,
-		message: 'bulk delete',
-		parents: [latestCommitSha],
-		tree: treeSha,
-	});
-	const newCommitSha = newCommitData.sha;
+		// create a new commit that links to the tree
+		const { data: newCommitData } = await octokit.request('POST /repos/{owner}/{repo}/git/commits', {
+			owner: user.name,
+			repo: user.repositoryName,
+			message: commitMessage,
+			parents: [latestCommitSha],
+			tree: treeSha,
+		});
+		const newCommitSha = newCommitData.sha;
 	
-	// setLatestCommitSha at this point?
+		// update main branch ref to point to the new commit
+		await octokit.request('PATCH /repos/{owner}/{repo}/git/refs/{ref}', {
+			owner: user.name,
+			repo: user.repositoryName,
+			ref: 'heads/main',
+				/*
+					* shouldn't be 'refs/...', otherwise run into 422 reference does not exist error
+					* should be main, unless Github changes it again ... in which case, consider searching the ref first: https://docs.github.com/en/rest/git/refs#list-matching-references
+						* const { data: dataForAllRefs } = await octokit.request('GET /repos/{owner}/{repo}/git/matching-refs/{ref}', 	{
+								owner: user.name,
+								repo: user.repositoryName,
+								ref: 'heads',
+							});
+				*/
+			sha: newCommitSha,
+			force: true,
+		});
 
-	await octokit.request('PATCH /repos/{owner}/{repo}/git/refs/{ref}', {
-  	owner: user.name,
-  	repo: user.repositoryName,
-  	ref: 'heads/main',
-			/*
-				* shouldn't be 'refs/...', otherwise run into 422 reference does not exist error
-				* should be main, unless Github changes it again ... in which case, consider searching the ref first: https://docs.github.com/en/rest/git/refs#list-matching-references
-			*/
-  	sha: newCommitSha,
-  	force: true,
-	});
+	} catch (error) {
+		throw(error);
+	}
 }
-
-// /* test */
-// 	const { data: dataForAllRefs } = await octokit.request('GET /repos/{owner}/{repo}/git/matching-refs/{ref}', {
-// 		owner: user.name,
-// 		repo: user.repositoryName,
-// 		ref: 'heads',
-// 	});
-
-// 	console.log(dataForAllRefs[0].ref);
