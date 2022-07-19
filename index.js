@@ -85,9 +85,9 @@ app.get('/', async function(req, res) {
 		const username = req.user.name;
 
 		try {
-			const titleAndContentForAllEngrams = await getTitleAndContentForAllEngrams(req.user);
+			const dataForAllEngrams = await getDataForAllEngrams(req.user);
 
-			res.send({ username, titleAndContentForAllEngrams });
+			res.send({ username, dataForAllEngrams });
 		} catch (error) {
 			console.error(error);
 
@@ -170,33 +170,38 @@ async function initEngramsDirectory(user) {
 	await saveEngram(user, engramFilename, engramContent, commitMessage);
 }
 
-async function getTitleAndContentForAllEngrams(user) {
+async function getDataForAllEngrams(user) { // getDataForAllEngrams
 	const octokit = new Octokit({
 		auth: user.accessToken,
 	});
 
-	const titleAndContentForAllEngrams = [];
+	const dataForAllEngrams = [];
 	try {
 		const engramsTree = await getEngramsTree(user);
 
-		for (const basicEngramProperties of engramsTree) {
-			const engramFilename = basicEngramProperties.path;
-			const { data: specificEngramProperties } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
+		for (const treeNode of engramsTree) {
+			const engramFilename = treeNode.path;
+
+			const { data: { content: engramContent} } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
 				owner: user.name,
 				repo: user.repositoryName,
 				path: `engrams/${engramFilename}`,
 			});
 
-			titleAndContentForAllEngrams.push({
+			const { commit: { author: { date: latestCommitDate } } } = await getLatestCommitData(user, `engrams/${engramFilename}`); // use author instead of commiter, I think https://stackoverflow.com/questions/18750808/difference-between-author-and-committer-in-git
+			// console.log(latestCommitDate);
+
+			dataForAllEngrams.push({
 				title: path.parse(engramFilename).name,
-				content: specificEngramProperties.content,
+				content: engramContent,
+				lastModified: latestCommitDate,
 			});
 		}
 	} catch (error) {
 		throw error;
 	}
 
-	return titleAndContentForAllEngrams;
+	return dataForAllEngrams;
 }
 
 async function getEngramsTree(user) { // return the tree representation of '/engrams' (containing useful info of every file within said directory), as per the Git trees API
@@ -205,7 +210,7 @@ async function getEngramsTree(user) { // return the tree representation of '/eng
 	});
 
 	try {
-		const latestCommitSha = await getLatestCommitSha(user);
+		const { sha: latestCommitSha } = await getLatestCommitData(user);
 		const { data: mostRecentCommitData } = await octokit.request('GET /repos/{owner}/{repo}/commits/{ref}', {
   		owner: user.name,
   		repo: user.repositoryName,
@@ -220,30 +225,38 @@ async function getEngramsTree(user) { // return the tree representation of '/eng
 		});
 
 		const engramsDirectorySha = repoData.tree.find((item) => item.path === 'engrams').sha;
-		const { data: everyEngramData } = await octokit.request('GET /repos/{owner}/{repo}/git/trees/{tree_sha}', {
+		const { data: dataForAllEngrams } = await octokit.request('GET /repos/{owner}/{repo}/git/trees/{tree_sha}', {
   		owner: user.name,
   		repo: user.repositoryName,
 			tree_sha: engramsDirectorySha,
 		});
 
-		return everyEngramData.tree;
+		return dataForAllEngrams.tree;
 	} catch (error) {
 		throw(error);
 	}
 }
 
-async function getLatestCommitSha(user) {
+async function getLatestCommitData(user, optionalPath = '') { // getLatestCommitData
 	const octokit = new Octokit({
 		auth: user.accessToken,
 	});
+	const requestRoute = optionalPath ?
+		`GET /repos/{owner}/{repo}/commits?path=${encodeURIComponent(optionalPath)}` :
+		'GET /repos/{owner}/{repo}/commits';
 
 	try {
-		const { data: dataForAllCommits } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
+		const { data: dataForAllCommits } = await octokit.request(requestRoute, {
 			owner: user.name,
 			repo: user.repositoryName,
 		});
 
-		return dataForAllCommits[0].sha;
+		// if (optionalPath) {
+		// 	console.log(optionalPath);
+		// 	console.log(dataForAllCommits[0]);
+		// }
+
+		return dataForAllCommits[0];
 	} catch (error) {
 		throw(error);
 	}
@@ -287,7 +300,7 @@ async function deleteEngrams(user, filenamesOfToBeDeletedEngrams, commitMessage)
 	});
 
 	try {
-		const latestCommitSha = await getLatestCommitSha(user);
+		const { sha: latestCommitSha } = await getLatestCommitData(user);
 
 		// create the tree on Github
 		const { data: dataForCreatingTree } = await octokit.request('POST /repos/{owner}/{repo}/git/trees', {
