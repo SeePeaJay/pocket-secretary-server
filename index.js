@@ -89,8 +89,7 @@ app.get('/', async function(req, res) {
 
 			res.send({ username, dataForAllEngrams });
 		} catch (error) {
-			console.error(error);
-
+			console.log(error);
 			res.sendStatus(502); // TODO: send entire error message (for alert in frontend)?
 		}
 	} else {
@@ -105,6 +104,7 @@ app.put('/engram', async function(req, res) {
 		await saveEngram(req.user, engramFilename, req.body.engramContent, req.body.commitMessage);
 		res.sendStatus(200);
 	} catch (error) {
+		console.log(error);
 		res.sendStatus(502);
 	}
 });
@@ -117,6 +117,7 @@ app.delete('/engrams', async function(req, res) {
 		await deleteEngrams(req.user, filenamesOfToBeDeletedEngrams, commitMessage);
 		res.sendStatus(200);
 	} catch (error) {
+		console.log(error);
 		res.sendStatus(502);
 	}
 });
