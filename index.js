@@ -170,33 +170,39 @@ async function initEngramsDirectory(user) {
 	await saveEngram(user, engramFilename, engramContent, commitMessage);
 }
 
-async function getDataForAllEngrams(user) { // getDataForAllEngrams
+async function getDataForAllEngrams(user) {
 	const octokit = new Octokit({
 		auth: user.accessToken,
 	});
 
 	const dataForAllEngrams = [];
 	try {
-		const engramsTree = await getEngramsTree(user);
+		const { repository: { object: { entries: allEngramEntries }}} = await octokit.graphql(
+			`query ($owner: String!, $name: String!) {
+				repository(owner: $owner, name: $name) {
+					object(expression: "HEAD:engrams") {
+						... on Tree {
+							entries {
+								name
+								object {
+									... on Blob {
+										text
+									}
+								}
+							}
+						}
+					}
+				}
+			}`,
+			{ owner: user.name, name: user.repositoryName, }
+		); // use variables as suggested at https://github.com/octokit/graphql.js#variables
 
-		for (const treeNode of engramsTree) {
-			const engramFilename = treeNode.path;
-
-			const { data: { content: engramContent} } = await octokit.request('GET /repos/{owner}/{repo}/contents/{path}', {
-				owner: user.name,
-				repo: user.repositoryName,
-				path: `engrams/${engramFilename}`,
-			});
-
-			const { commit: { author: { date: latestCommitDate } } } = await getLatestCommitData(user, `engrams/${engramFilename}`); // use author instead of commiter, I think https://stackoverflow.com/questions/18750808/difference-between-author-and-committer-in-git
-			// console.log(latestCommitDate);
-
+		allEngramEntries.forEach((entry) => {
 			dataForAllEngrams.push({
-				title: path.parse(engramFilename).name,
-				content: engramContent,
-				lastModified: latestCommitDate,
+				title: path.parse(entry.name).name,
+				content: Buffer.from(entry.object.text).toString('base64'),
 			});
-		}
+		});
 	} catch (error) {
 		throw error;
 	}
@@ -204,57 +210,16 @@ async function getDataForAllEngrams(user) { // getDataForAllEngrams
 	return dataForAllEngrams;
 }
 
-async function getEngramsTree(user) { // return the tree representation of '/engrams' (containing useful info of every file within said directory), as per the Git trees API
-	const octokit = new Octokit({ // for some reason octokit cannot be a param, hence this
-		auth: user.accessToken,
-	});
-
-	try {
-		const { sha: latestCommitSha } = await getLatestCommitData(user);
-		const { data: mostRecentCommitData } = await octokit.request('GET /repos/{owner}/{repo}/commits/{ref}', {
-  		owner: user.name,
-  		repo: user.repositoryName,
-			ref: latestCommitSha,
-		}); // ref here = particular commit sha
-
-		const repoSha = mostRecentCommitData.commit.tree.sha;
-		const { data: repoData } = await octokit.request('GET /repos/{owner}/{repo}/git/trees/{tree_sha}', {
-  		owner: user.name,
-  		repo: user.repositoryName,
-			tree_sha: repoSha,
-		});
-
-		const engramsDirectorySha = repoData.tree.find((item) => item.path === 'engrams').sha;
-		const { data: dataForAllEngrams } = await octokit.request('GET /repos/{owner}/{repo}/git/trees/{tree_sha}', {
-  		owner: user.name,
-  		repo: user.repositoryName,
-			tree_sha: engramsDirectorySha,
-		});
-
-		return dataForAllEngrams.tree;
-	} catch (error) {
-		throw(error);
-	}
-}
-
-async function getLatestCommitData(user, optionalPath = '') { // getLatestCommitData
+async function getLatestCommitData(user) {
 	const octokit = new Octokit({
 		auth: user.accessToken,
 	});
-	const requestRoute = optionalPath ?
-		`GET /repos/{owner}/{repo}/commits?path=${encodeURIComponent(optionalPath)}` :
-		'GET /repos/{owner}/{repo}/commits';
 
 	try {
-		const { data: dataForAllCommits } = await octokit.request(requestRoute, {
+		const { data: dataForAllCommits } = await octokit.request('GET /repos/{owner}/{repo}/commits', {
 			owner: user.name,
 			repo: user.repositoryName,
 		});
-
-		// if (optionalPath) {
-		// 	console.log(optionalPath);
-		// 	console.log(dataForAllCommits[0]);
-		// }
 
 		return dataForAllCommits[0];
 	} catch (error) {
@@ -263,6 +228,7 @@ async function getLatestCommitData(user, optionalPath = '') { // getLatestCommit
 }
 
 // commitMessage appears to be a better alternative compared to one param for each additional commit reason (repoIsNew, etc.) ... recall Github's 100644
+// TODO: GraphQL?
 async function saveEngram(user, engramFilename, engramContent, commitMessage) {
 	const octokit = new Octokit({ auth: user.accessToken });
 	const owner = user.name;
@@ -285,6 +251,7 @@ async function saveEngram(user, engramFilename, engramContent, commitMessage) {
 	}
 }
 
+// TODO: GraphQL?
 async function deleteEngrams(user, filenamesOfToBeDeletedEngrams, commitMessage) {
 	const octokit = new Octokit({ auth: user.accessToken });
 
