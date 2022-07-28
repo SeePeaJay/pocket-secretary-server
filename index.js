@@ -101,7 +101,7 @@ app.put('/engram', async function(req, res) {
 	const engramFilename = `${req.body.engramTitle}.engram`;
 
 	try {
-		await saveEngram(req.user, engramFilename, req.body.engramContent, req.body.commitMessage);
+		await saveEngram(req.user, engramFilename, req.body.engramContents, req.body.commitMessage);
 		res.sendStatus(200);
 	} catch (error) {
 		console.log(error);
@@ -165,10 +165,10 @@ async function initEngramsDirectory(user) {
 	console.log('Need to create the directory ...');
 
 	const engramFilename = 'Starred.engram';
-	const engramContent = '* Starred';
+	const engramContents = '* Starred';
 	const commitMessage = 'init';
 
-	await saveEngram(user, engramFilename, engramContent, commitMessage);
+	await saveEngram(user, engramFilename, engramContents, commitMessage);
 }
 
 async function getDataForAllEngrams(user) {
@@ -230,7 +230,7 @@ async function getLatestCommitData(user) {
 
 // commitMessage appears to be a better alternative compared to one param for each additional commit reason (repoIsNew, etc.) ... recall Github's 100644
 // TODO: GraphQL?
-async function saveEngram(user, engramFilename, engramContent, commitMessage) {
+async function saveEngram(user, engramFilename, engramContents, commitMessage) {
 	const octokit = new Octokit({ auth: user.accessToken });
 	const owner = user.name;
 	const repo = user.repositoryName;
@@ -244,7 +244,7 @@ async function saveEngram(user, engramFilename, engramContent, commitMessage) {
 
 		await octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', { owner, repo, path,
 			message: commitMessage,
-			content: Buffer.from(engramContent).toString('base64'),
+			content: Buffer.from(engramContents).toString('base64'),
 			...(sha) && { sha }, // conditionally add sha to object
 		});
 	} catch (error) {
